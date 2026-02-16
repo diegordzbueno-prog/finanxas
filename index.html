@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0B0D14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Finanxas">
+  <meta name="description" content="Control financiero personal">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" href="icon-192.png">
+  <title>Finanxas</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    ::-webkit-scrollbar { display: none; }
+    html, body { 
+      background: #0B0D14; color: #E2E8F0; 
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh; min-height: 100dvh;
+      overscroll-behavior: none;
+    }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+    
+    /* Loading screen */
+    #loading {
+      position: fixed; inset: 0; background: #0B0D14; z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    #loading h1 {
+      font-size: 32px; font-weight: 700;
+      background: linear-gradient(135deg, #22D3EE, #818CF8);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    #loading p { color: #475569; font-size: 13px; margin-top: 8px; }
+    .loading-spinner {
+      width: 32px; height: 32px; border: 3px solid #1E2030; border-top-color: #22D3EE;
+      border-radius: 50%; animation: spin 0.8s linear infinite; margin-top: 24px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+    @keyframes slideDown { from { opacity: 0; transform: translateY(-20px) } to { opacity: 1; transform: translateY(0) } }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <h1>Finanxas</h1>
+    <p>Tu control financiero 💪</p>
+    <div class="loading-spinner"></div>
+  </div>
+  <div id="app"></div>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- Google API client -->
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+
+  <script type="module">
+    // ══════════════════════════════════════════════════════
+    // FINANXAS v2.0 — Full PWA + Google Drive Sync
+    // ══════════════════════════════════════════════════════
+
+    // ─── CONFIG: Replace with your own credentials ───
+    const CONFIG = {
+      GOOGLE_CLIENT_ID: 'TU_CLIENT_ID_AQUI.apps.googleusercontent.com',
+      GOOGLE_API_KEY: 'TU_API_KEY_AQUI',
+      SCOPES: 'https://www.googleapis.com/auth/drive.appdata',
+      DRIVE_FILENAME: 'finanxas_backup.json',
+    };
+
+    // ─── Constants ───
+    const CURRENCIES = { MXN: { symbol: '$', name: 'Pesos', flag: '🇲🇽' }, USD: { symbol: '$', name: 'Dólares', flag: '🇺🇸' }, EUR: { symbol: '€', name: 'Euros', flag: '🇪🇺' } };
+    const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const FREQUENCIES = [
+      { id: 'daily', label: 'Diario' },
+      { id: 'weekly', label: 'Semanal' },
+      { id: 'biweekly', label: 'Quincenal' },
+      { id: 'monthly', label: 'Mensual' },
+      { id: 'yearly', label: 'Anual' },
+    ];
+
+    const DEFAULT_CATEGORIES = {
+      expense: [
+        { id: 'food', name: 'Comida', icon: '🍔', color: '#FF6B6B' },
+        { id: 'transport', name: 'Transporte', icon: '🚗', color: '#4ECDC4' },
+        { id: 'entertainment', name: 'Entretenimiento', icon: '🎮', color: '#A78BFA' },
+        { id: 'services', name: 'Servicios', icon: '💡', color: '#FBBF24' },
+        { id: 'health', name: 'Salud', icon: '🏥', color: '#34D399' },
+        { id: 'shopping', name: 'Compras', icon: '🛒', color: '#F472B6' },
+        { id: 'home', name: 'Hogar', icon: '🏠', color: '#60A5FA' },
+        { id: 'other_exp', name: 'Otros', icon: '📦', color: '#9CA3AF' },
+      ],
+      income: [
+        { id: 'trading_gold', name: 'Trading Gold', icon: '🥇', color: '#FFD700' },
+        { id: 'trading_sp500', name: 'Trading S&P500', icon: '📈', color: '#10B981' },
+        { id: 'trading_crypto', name: 'Crypto', icon: '₿', color: '#F7931A' },
+        { id: 'ftmo_payout', name: 'FTMO Payout', icon: '💰', color: '#22D3EE' },
+        { id: 'forex', name: 'Forex', icon: '💱', color: '#818CF8' },
+        { id: 'salary', name: 'Salario/Otros', icon: '💵', color: '#6EE7B7' },
+        { id: 'other_inc', name: 'Otros Ingresos', icon: '🎁', color: '#D1D5DB' },
+      ],
+    };
+
+    // ─── Storage ───
+    const STORAGE_KEY = 'finanxas_data_v1';
+
+    const loadLocal = () => {
+      try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch(e) { return null; }
+    };
+
+    const saveLocal = (data) => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+    };
+
+    // ─── Google Drive Module ───
+    const GDrive = {
+      tokenClient: null,
+      accessToken: null,
+      isReady: false,
+
+      async init() {
+        return new Promise((resolve) => {
+          const checkReady = setInterval(() => {
+            if (window.google?.accounts?.oauth2 && window.gapi) {
+              clearInterval(checkReady);
+              gapi.load('client', async () => {
+                await gapi.client.init({ apiKey: CONFIG.GOOGLE_API_KEY, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'] });
+                GDrive.tokenClient = google.accounts.oauth2.initTokenClient({
+                  client_id: CONFIG.GOOGLE_CLIENT_ID,
+                  scope: CONFIG.SCOPES,
+                  callback: (resp) => {
+                    if (resp.error) return;
+                    GDrive.accessToken = resp.access_token;
+                    GDrive.isReady = true;
+                  },
+                });
+                resolve(true);
+              });
+            }
+          }, 200);
+          // Timeout after 10s
+          setTimeout(() => { clearInterval(checkReady); resolve(false); }, 10000);
+        });
+      },
+
+      requestAccess() {
+        return new Promise((resolve) => {
+          if (!GDrive.tokenClient) { resolve(false); return; }
+          const originalCallback = GDrive.tokenClient.callback;
+          GDrive.tokenClient.callback = (resp) => {
+            if (resp.error) { resolve(false); return; }
+            GDrive.accessToken = resp.access_token;
+            GDrive.isReady = true;
+            resolve(true);
+          };
+          if (GDrive.accessToken) {
+            GDrive.tokenClient.requestAccessToken({ prompt: '' });
+          } else {
+            GDrive.tokenClient.requestAccessToken({ prompt: 'consent' });
+          }
+        });
+      },
+
+      async findFile() {
+        try {
+          const resp = await gapi.client.drive.files.list({
+            spaces: 'appDataFolder',
+            q: `name='${CONFIG.DRIVE_FILENAME}'`,
+            fields: 'files(id, name, modifiedTime)',
+            pageSize: 1,
+          });
+          return resp.result.files?.[0] || null;
+        } catch(e) { console.error('Drive findFile:', e); return null; }
+      },
+
+      async readFile(fileId) {
+        try {
+          const resp = await gapi.client.drive.files.get({ fileId, alt: 'media' });
+          return typeof resp.result === 'string' ? JSON.parse(resp.result) : resp.result;
+        } catch(e) { console.error('Drive readFile:', e); return null; }
+      },
+
+      async saveFile(data) {
+        try {
+          const existing = await GDrive.findFile();
+          const content = JSON.stringify(data);
+          const boundary = '-------finanxas';
+          const metadata = {
+            name: CONFIG.DRIVE_FILENAME,
+            mimeType: 'application/json',
+            ...(existing ? {} : { parents: ['appDataFolder'] }),
+          };
+          const body = [
+            `--${boundary}`,
+            'Content-Type: application/json; charset=UTF-8',
+            '',
+            JSON.stringify(metadata),
+            `--${boundary}`,
+            'Content-Type: application/json',
+            '',
+            content,
+            `--${boundary}--`,
+          ].join('\r\n');
+
+          const url = existing
+            ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart`
+            : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+          const resp = await fetch(url, {
+            method: existing ? 'PATCH' : 'POST',
+            headers: {
+              'Authorization': `Bearer ${GDrive.accessToken}`,
+              'Content-Type': `multipart/related; boundary=${boundary}`,
+            },
+            body,
+          });
+          return resp.ok;
+        } catch(e) { console.error('Drive saveFile:', e); return false; }
+      },
+
+      async loadFromDrive() {
+        if (!GDrive.isReady) return null;
+        const file = await GDrive.findFile();
+        if (!file) return null;
+        return await GDrive.readFile(file.id);
+      },
+
+      async saveToDrive(data) {
+        if (!GDrive.isReady) return false;
+        return await GDrive.saveFile({
+          ...data,
+          lastSync: new Date().toISOString(),
+          app: 'Finanxas',
+        });
+      },
+
+      disconnect() {
+        if (GDrive.accessToken) {
+          google.accounts.oauth2.revoke(GDrive.accessToken);
+          GDrive.accessToken = null;
+          GDrive.isReady = false;
+        }
+      }
+    };
+
+    // ─── Recurring Processing ───
+    const processRecurring = (recurring, transactions) => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      let newTxs = [];
+      const updatedRecurring = recurring.map(r => {
+        if (!r.active) return r;
+        const lastApplied = r.lastApplied || r.startDate;
+        const getNext = (from) => {
+          const d = new Date(from + 'T12:00:00');
+          if (r.frequency === 'daily') d.setDate(d.getDate() + 1);
+          else if (r.frequency === 'weekly') d.setDate(d.getDate() + 7);
+          else if (r.frequency === 'biweekly') d.setDate(d.getDate() + 14);
+          else if (r.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+          else if (r.frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+          return d.toISOString().split('T')[0];
+        };
+        let next = getNext(lastApplied);
+        let updated = { ...r };
+        while (next <= todayStr) {
+          const txId = `rec_${r.id}_${next}`;
+          if (!transactions.find(t => t.id === txId)) {
+            newTxs.push({ id: txId, type: r.type, amount: r.amount, category: r.category, currency: r.currency, date: next, note: `${r.note} 🔄`, fromRecurring: r.id });
+          }
+          updated.lastApplied = next;
+          next = getNext(next);
+        }
+        return updated;
+      });
+      return { updatedRecurring, newTxs };
+    };
+
+    // ─── Utility ───
+    const fmt = (amount, currency) => {
+      const c = CURRENCIES[currency] || CURRENCIES.MXN;
+      return `${c.symbol}${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+    const getMonthTxs = (txs, m, y, cur) => txs.filter(t => {
+      const d = new Date(t.date + 'T12:00:00');
+      return d.getMonth() === m && d.getFullYear() === y && t.currency === cur;
+    });
+
+    // ─── App State ───
+    let state = {};
+    const initState = () => {
+      const saved = loadLocal();
+      const recurring = saved?.recurring || [];
+      const transactions = saved?.transactions || [];
+      const { updatedRecurring, newTxs } = processRecurring(recurring, transactions);
+      return {
+        transactions: [...transactions, ...newTxs],
+        categories: saved?.categories || DEFAULT_CATEGORIES,
+        budgets: saved?.budgets || {},
+        recurring: updatedRecurring,
+        view: 'dashboard',
+        modal: null,
+        editTx: null,
+        month: new Date().getMonth(),
+        year: new Date().getFullYear(),
+        currency: 'MXN',
+        toast: null,
+        driveStatus: 'disconnected', // disconnected | connecting | connected | syncing
+        lastSync: saved?.lastSync || null,
+      };
+    };
+
+    const update = (changes) => {
+      state = { ...state, ...changes };
+      const dataToSave = { transactions: state.transactions, categories: state.categories, budgets: state.budgets, recurring: state.recurring, lastSync: state.lastSync };
+      saveLocal(dataToSave);
+      render();
+    };
+
+    const showToast = (message, type = 'success') => {
+      update({ toast: { message, type } });
+      setTimeout(() => update({ toast: null }), 3000);
+    };
+
+    // ─── Google Drive Sync Functions ───
+    const connectDrive = async () => {
+      update({ driveStatus: 'connecting' });
+      const ok = await GDrive.requestAccess();
+      if (ok) {
+        update({ driveStatus: 'connected' });
+        showToast('Conectado a Google Drive');
+        // Auto-sync on connect
+        await syncWithDrive();
+      } else {
+        update({ driveStatus: 'disconnected' });
+        showToast('Error al conectar', 'error');
+      }
+    };
+
+    const syncWithDrive = async () => {
+      if (!GDrive.isReady) return;
+      update({ driveStatus: 'syncing' });
+      try {
+        // Load from Drive
+        const driveData = await GDrive.loadFromDrive();
+        if (driveData) {
+          const driveTime = new Date(driveData.lastSync || 0).getTime();
+          const localTime = new Date(state.lastSync || 0).getTime();
+          
+          if (driveTime > localTime) {
+            // Drive is newer — merge: take drive data but keep any local txs not in drive
+            const driveTxIds = new Set(driveData.transactions?.map(t => t.id) || []);
+            const localOnly = state.transactions.filter(t => !driveTxIds.has(t.id));
+            const merged = [...(driveData.transactions || []), ...localOnly];
+            update({
+              transactions: merged,
+              categories: driveData.categories || state.categories,
+              budgets: driveData.budgets || state.budgets,
+              recurring: driveData.recurring || state.recurring,
+              driveStatus: 'connected',
+              lastSync: new Date().toISOString(),
+            });
+            showToast('Datos sincronizados desde Drive');
+            // Save merged back to Drive
+            await GDrive.saveToDrive({ transactions: merged, categories: state.categories, budgets: state.budgets, recurring: state.recurring, lastSync: new Date().toISOString() });
+            return;
+          }
+        }
+        
+        // Local is newer or Drive is empty — push to Drive
+        const ok = await GDrive.saveToDrive({
+          transactions: state.transactions,
+          categories: state.categories,
+          budgets: state.budgets,
+          recurring: state.recurring,
+          lastSync: new Date().toISOString(),
+        });
+        update({ driveStatus: 'connected', lastSync: new Date().toISOString() });
+        showToast(ok ? 'Respaldo guardado en Drive' : 'Error al guardar', ok ? 'success' : 'error');
+      } catch(e) {
+        console.error('Sync error:', e);
+        update({ driveStatus: 'connected' });
+        showToast('Error de sincronización', 'error');
+      }
+    };
+
+    const disconnectDrive = () => {
+      GDrive.disconnect();
+      update({ driveStatus: 'disconnected' });
+      showToast('Desconectado de Google Drive');
+    };
+
+    // ─── Rendering (Vanilla JS for GitHub Pages) ───
+    const el = (tag, attrs = {}, ...children) => {
+      const e = document.createElement(tag);
+      Object.entries(attrs).forEach(([k, v]) => {
+        if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+        else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+        else if (k === 'className') e.className = v;
+        else e.setAttribute(k, v);
+      });
+      children.flat(Infinity).forEach(c => {
+        if (c == null || c === false) return;
+        e.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(c) : c);
+      });
+      return e;
+    };
+
+    // ─── Component: Toast ───
+    const renderToast = () => {
+      if (!state.toast) return '';
+      const colors = { success: '#059669', error: '#DC2626', info: '#2563EB' };
+      const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+      return el('div', { style: {
+        position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
+        padding: '12px 24px', borderRadius: '12px', zIndex: '9999',
+        background: colors[state.toast.type] || colors.info,
+        color: '#fff', fontSize: '14px', fontWeight: '600',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)', animation: 'slideDown 0.3s ease',
+        whiteSpace: 'nowrap',
+      }}, `${icons[state.toast.type] || ''} ${state.toast.message}`);
+    };
+
+    // ─── Component: Sparkline SVG ───
+    const sparklineSVG = (data, color, w = 80, h = 32) => {
+      if (!data.length) return '';
+      const max = Math.max(...data, 1), min = Math.min(...data, 0), range = max - min || 1;
+      const pts = data.map((v, i) => `${(i/(data.length-1||1))*w},${h-((v-min)/range)*(h-4)-2}`).join(' ');
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', w); svg.setAttribute('height', h); svg.style.overflow = 'visible';
+      svg.innerHTML = `<polyline fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" points="${pts}"/>
+        <polygon fill="${color}" fill-opacity="0.15" points="0,${h} ${pts} ${w},${h}"/>`;
+      return svg;
+    };
+
+    // ─── Component: Donut SVG ───
+    const donutSVG = (segments, size = 120) => {
+      const total = segments.reduce((s, g) => s + g.value, 0) || 1;
+      const r = (size - 20) / 2, cx = size/2, cy = size/2;
+      let cum = -90;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', size); svg.setAttribute('height', size);
+      segments.filter(s => s.value > 0).forEach(seg => {
+        const angle = (seg.value / total) * 360;
+        const s = cum * Math.PI / 180, e = (cum + angle) * Math.PI / 180;
+        const x1 = cx+r*Math.cos(s), y1 = cy+r*Math.sin(s);
+        const x2 = cx+r*Math.cos(e), y2 = cy+r*Math.sin(e);
+        const la = angle > 180 ? 1 : 0;
+        cum += angle;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${la} 1 ${x2} ${y2} Z`);
+        path.setAttribute('fill', seg.color); path.setAttribute('opacity', '0.85');
+        svg.appendChild(path);
+      });
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', r*0.55);
+      circle.setAttribute('fill', '#0F1117');
+      svg.appendChild(circle);
+      return svg;
+    };
+
+    // ─── Component: Bar Chart ───
+    const barChart = (data, color, height = 100) => {
+      const max = Math.max(...data.map(d => d.value), 1);
+      return el('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '4px', height: height+'px' } },
+        data.map(d => el('div', { style: { flex: '1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' } },
+          el('div', { style: {
+            width: '100%', maxWidth: '32px', borderRadius: '4px 4px 0 0',
+            height: Math.max((d.value/max)*(height-24), 2) + 'px',
+            background: `linear-gradient(180deg, ${color}, ${color}88)`,
+            transition: 'height 0.5s ease',
+          }}),
+          el('span', { style: { fontSize: '9px', color: '#64748B' } }, d.label)
+        ))
+      );
+    };
+
+    // ─── Shared Styles ───
+    const cardStyle = { background: '#13151E', borderRadius: '16px', padding: '20px', border: '1px solid #1E2030' };
+    const inputStyles = {
+      width: '100%', padding: '10px 14px', background: '#1A1D27', border: '1px solid #2A2D3A',
+      borderRadius: '10px', color: '#E2E8F0', fontSize: '14px', outline: 'none', boxSizing: 'border-box',
+    };
+    const btnStyle = (bg, color, extra = {}) => ({
+      padding: '10px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+      fontWeight: '600', fontSize: '13px', background: bg, color, transition: 'all 0.15s', ...extra,
+    });
+
+    // ─── Render: Header ───
+    const renderHeader = () => {
+      return el('div', { style: {
+        padding: '16px 20px 12px', background: 'linear-gradient(180deg, #0B0D14 0%, transparent 100%)',
+        position: 'sticky', top: '0', zIndex: '100',
+      }},
+        // Top row
+        el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' } },
+          el('div', {},
+            el('h1', { style: { margin: '0', fontSize: '22px', fontWeight: '700' } },
+              el('span', { style: { background: 'linear-gradient(135deg, #22D3EE, #818CF8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, 'Finanxas')
+            ),
+            el('div', { style: { fontSize: '11px', color: '#475569', marginTop: '2px' } }, 'Tu control financiero 💪')
+          ),
+          el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+            // Drive status indicator
+            el('button', {
+              onClick: () => state.driveStatus === 'connected' ? syncWithDrive() : (state.driveStatus === 'disconnected' ? update({ modal: 'settings' }) : null),
+              style: {
+                width: '32px', height: '32px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                background: state.driveStatus === 'connected' ? '#34D39922' : state.driveStatus === 'syncing' ? '#FBBF2422' : '#1A1D27',
+                fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                animation: state.driveStatus === 'syncing' ? 'spin 1s linear infinite' : 'none',
+              }
+            }, state.driveStatus === 'connected' ? '☁️' : state.driveStatus === 'syncing' ? '🔄' : '📴'),
+            // Currency buttons
+            ...Object.entries(CURRENCIES).map(([key, val]) =>
+              el('button', {
+                onClick: () => update({ currency: key }),
+                style: {
+                  padding: '6px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                  fontSize: '12px', fontWeight: '600',
+                  background: state.currency === key ? '#22D3EE18' : '#1A1D27',
+                  color: state.currency === key ? '#22D3EE' : '#475569',
+                }
+              }, `${val.flag} ${key}`)
+            )
+          )
+        ),
+        // Month selector
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+          el('button', {
+            onClick: () => {
+              const m = state.month === 0 ? 11 : state.month - 1;
+              const y = state.month === 0 ? state.year - 1 : state.year;
+              update({ month: m, year: y });
+            },
+            style: { width: '30px', height: '30px', borderRadius: '8px', border: '1px solid #1E2030', background: '#13151E', color: '#94A3B8', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+          }, '‹'),
+          el('div', { style: { flex: '1', textAlign: 'center', fontSize: '14px', fontWeight: '600', color: '#CBD5E1' } }, `${MONTHS[state.month]} ${state.year}`),
+          el('button', {
+            onClick: () => {
+              const m = state.month === 11 ? 0 : state.month + 1;
+              const y = state.month === 11 ? state.year + 1 : state.year;
+              update({ month: m, year: y });
+            },
+            style: { width: '30px', height: '30px', borderRadius: '8px', border: '1px solid #1E2030', background: '#13151E', color: '#94A3B8', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+          }, '›')
+        )
+      );
+    };
+
+    // ─── Render: Dashboard ───
+    const renderDashboard = () => {
+      const txs = getMonthTxs(state.transactions, state.month, state.year, state.currency);
+      const inc = txs.filter(t => t.type === 'income').reduce((s,t) => s+t.amount, 0);
+      const exp = txs.filter(t => t.type === 'expense').reduce((s,t) => s+t.amount, 0);
+      const bal = inc - exp;
+      const days = new Date(state.year, state.month+1, 0).getDate();
+      const dExp = Array.from({length:days},(_,i) => txs.filter(t=>t.type==='expense'&&new Date(t.date+'T12:00:00').getDate()===i+1).reduce((s,t)=>s+t.amount,0));
+      const dInc = Array.from({length:days},(_,i) => txs.filter(t=>t.type==='income'&&new Date(t.date+'T12:00:00').getDate()===i+1).reduce((s,t)=>s+t.amount,0));
+
+      const expByCat = state.categories.expense.map(c => {
+        const v = txs.filter(t=>t.type==='expense'&&t.category===c.id).reduce((s,t)=>s+t.amount,0);
+        return { ...c, value: v, pct: exp ? Math.round(v/exp*100) : 0 };
+      }).filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
+
+      const incByCat = state.categories.income.map(c => {
+        const v = txs.filter(t=>t.type==='income'&&t.category===c.id).reduce((s,t)=>s+t.amount,0);
+        return { ...c, value: v, pct: inc ? Math.round(v/inc*100) : 0 };
+      }).filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
+
+      const monthData = Array.from({length:6},(_,i) => {
+        let m = state.month-5+i, y = state.year;
+        if (m<0) { m+=12; y-=1; }
+        const mt = getMonthTxs(state.transactions,m,y,state.currency);
+        return { label: MONTHS[m], income: mt.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0), expense: mt.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0) };
+      });
+
+      const allCats = [...state.categories.expense, ...state.categories.income];
+
+      return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+        // Summary cards
+        el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' } },
+          ...[
+            { label: 'Balance', value: bal, color: bal >= 0 ? '#34D399' : '#FF6B6B', data: dInc.map((v,i) => v-dExp[i]) },
+            { label: 'Ingresos', value: inc, color: '#34D399', data: dInc },
+            { label: 'Gastos', value: exp, color: '#FF6B6B', data: dExp },
+          ].map(c => {
+            const card = el('div', { style: { ...cardStyle, position: 'relative', overflow: 'hidden' } },
+              el('div', { style: { fontSize: '12px', color: '#64748B', marginBottom: '4px', fontWeight: '500' } }, c.label),
+              el('div', { style: { fontSize: '20px', fontWeight: '700', color: c.color } }, `${c.label==='Balance'&&bal<0?'-':''}${fmt(c.value, state.currency)}`)
+            );
+            const sparkWrap = el('div', { style: { position: 'absolute', bottom: '0', right: '0', opacity: '0.6' } });
+            sparkWrap.appendChild(sparklineSVG(c.data, c.color));
+            card.appendChild(sparkWrap);
+            return card;
+          })
+        ),
+
+        // Charts row
+        el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
+          // Expense donut
+          (() => {
+            const card = el('div', { style: cardStyle },
+              el('div', { style: { fontSize: '13px', color: '#94A3B8', marginBottom: '12px', fontWeight: '600' } }, 'Gastos por categoría')
+            );
+            if (expByCat.length) {
+              const row = el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } });
+              row.appendChild(donutSVG(expByCat, 120));
+              const legend = el('div', { style: { flex: '1' } },
+                ...expByCat.slice(0,5).map(c => el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
+                  el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                    el('div', { style: { width: '8px', height: '8px', borderRadius: '50%', background: c.color } }),
+                    el('span', { style: { fontSize: '11px', color: '#CBD5E1' } }, `${c.icon} ${c.name}`)
+                  ),
+                  el('span', { style: { fontSize: '11px', color: '#64748B' } }, `${c.pct}%`)
+                ))
+              );
+              row.appendChild(legend);
+              card.appendChild(row);
+            } else {
+              card.appendChild(el('div', { style: { color: '#475569', fontSize: '13px', textAlign: 'center', padding: '20px' } }, 'Sin gastos este mes'));
+            }
+            return card;
+          })(),
+          // Income donut
+          (() => {
+            const card = el('div', { style: cardStyle },
+              el('div', { style: { fontSize: '13px', color: '#94A3B8', marginBottom: '12px', fontWeight: '600' } }, 'Ingresos por fuente')
+            );
+            if (incByCat.length) {
+              const row = el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } });
+              row.appendChild(donutSVG(incByCat, 120));
+              const legend = el('div', { style: { flex: '1' } },
+                ...incByCat.slice(0,5).map(c => el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
+                  el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                    el('div', { style: { width: '8px', height: '8px', borderRadius: '50%', background: c.color } }),
+                    el('span', { style: { fontSize: '11px', color: '#CBD5E1' } }, `${c.icon} ${c.name}`)
+                  ),
+                  el('span', { style: { fontSize: '11px', color: '#64748B' } }, `${c.pct}%`)
+                ))
+              );
+              row.appendChild(legend);
+              card.appendChild(row);
+            } else {
+              card.appendChild(el('div', { style: { color: '#475569', fontSize: '13px', textAlign: 'center', padding: '20px' } }, 'Sin ingresos este mes'));
+            }
+            return card;
+          })()
+        ),
+
+        // 6 month bar charts
+        el('div', { style: cardStyle },
+          el('div', { style: { fontSize: '13px', color: '#94A3B8', marginBottom: '12px', fontWeight: '600' } }, 'Últimos 6 meses'),
+          el('div', { style: { display: 'flex', gap: '16px' } },
+            el('div', { style: { flex: '1' } },
+              el('div', { style: { fontSize: '10px', color: '#34D399', marginBottom: '4px', fontWeight: '600' } }, 'Ingresos'),
+              barChart(monthData.map(d => ({ label: d.label, value: d.income })), '#34D399')
+            ),
+            el('div', { style: { flex: '1' } },
+              el('div', { style: { fontSize: '10px', color: '#FF6B6B', marginBottom: '4px', fontWeight: '600' } }, 'Gastos'),
+              barChart(monthData.map(d => ({ label: d.label, value: d.expense })), '#FF6B6B')
+            )
+          )
+        ),
+
+        // Recent txs
+        el('div', { style: cardStyle },
+          el('div', { style: { fontSize: '13px', color: '#94A3B8', marginBottom: '12px', fontWeight: '600' } }, 'Transacciones recientes'),
+          ...(txs.length === 0
+            ? [el('div', { style: { color: '#475569', fontSize: '13px', textAlign: 'center', padding: '20px' } }, 'Aún no hay transacciones este mes')]
+            : txs.sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0, 8).map(tx => {
+                const cat = allCats.find(c => c.id === tx.category) || { icon: '❓', name: '?', color: '#666' };
+                return el('div', {
+                  onClick: () => update({ modal: 'transaction', editTx: tx }),
+                  style: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #1A1D27', cursor: 'pointer' }
+                },
+                  el('div', { style: { width: '36px', height: '36px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', background: cat.color+'18', marginRight: '12px', flexShrink: '0' } }, cat.icon),
+                  el('div', { style: { flex: '1', minWidth: '0' } },
+                    el('div', { style: { fontSize: '13px', color: '#E2E8F0', fontWeight: '500' } }, cat.name),
+                    el('div', { style: { fontSize: '11px', color: '#475569' } }, tx.note || new Date(tx.date+'T12:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }))
+                  ),
+                  el('div', { style: { fontSize: '14px', fontWeight: '600', color: tx.type==='income' ? '#34D399' : '#FF6B6B' } }, `${tx.type==='income'?'+':'-'}${fmt(tx.amount, tx.currency)}`)
+                );
+              })
+          )
+        )
+      );
+    };
+
+    // ─── Render: Transactions List ───
+    const renderTransactions = () => {
+      const txs = getMonthTxs(state.transactions, state.month, state.year, state.currency).sort((a,b) => new Date(b.date)-new Date(a.date));
+      const grouped = {};
+      txs.forEach(t => { if (!grouped[t.date]) grouped[t.date] = []; grouped[t.date].push(t); });
+      const allCats = [...state.categories.expense, ...state.categories.income];
+
+      if (!Object.keys(grouped).length) {
+        return el('div', { style: { ...cardStyle, textAlign: 'center', padding: '40px', color: '#475569' } },
+          el('div', { style: { fontSize: '40px', marginBottom: '8px' } }, '📭'),
+          'Sin transacciones este mes'
+        );
+      }
+
+      return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+        ...Object.entries(grouped).map(([date, items]) => {
+          const dayTotal = items.reduce((s,t) => s + (t.type==='income' ? t.amount : -t.amount), 0);
+          return el('div', {},
+            el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '4px', marginBottom: '6px' } },
+              el('span', { style: { fontSize: '12px', color: '#64748B', fontWeight: '600' } }, new Date(date+'T12:00:00').toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })),
+              el('span', { style: { fontSize: '11px', fontWeight: '600', color: dayTotal >= 0 ? '#34D399' : '#FF6B6B' } }, `${dayTotal>=0?'+':''}${fmt(dayTotal, state.currency)}`)
+            ),
+            el('div', { style: { ...cardStyle, padding: '16px' } },
+              ...items.map((tx, idx) => {
+                const cat = allCats.find(c => c.id === tx.category) || { icon: '❓', name: '?', color: '#666' };
+                return el('div', {
+                  onClick: () => update({ modal: 'transaction', editTx: tx }),
+                  style: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: idx < items.length-1 ? '1px solid #1A1D27' : 'none', cursor: 'pointer' }
+                },
+                  el('div', { style: { width: '36px', height: '36px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', background: cat.color+'18', marginRight: '12px', flexShrink: '0' } }, cat.icon),
+                  el('div', { style: { flex: '1', minWidth: '0' } },
+                    el('div', { style: { fontSize: '13px', color: '#E2E8F0', fontWeight: '500' } }, cat.name),
+                    ...(tx.note ? [el('div', { style: { fontSize: '11px', color: '#475569' } }, tx.note)] : [])
+                  ),
+                  el('div', { style: { fontSize: '14px', fontWeight: '600', color: tx.type==='income' ? '#34D399' : '#FF6B6B' } }, `${tx.type==='income'?'+':'-'}${fmt(tx.amount, tx.currency)}`)
+                );
+              })
+            )
+          );
+        })
+      );
+    };
+
+    // ─── Render: Modal Wrapper ───
+    const renderModal = (title, content) => {
+      const overlay = el('div', {
+        onClick: () => update({ modal: null, editTx: null }),
+        style: { position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1000', padding: '16px' }
+      });
+      const box = el('div', {
+        onClick: (e) => e.stopPropagation(),
+        style: { background: '#13151E', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '420px', border: '1px solid #1E2030', maxHeight: '90vh', overflowY: 'auto' }
+      },
+        el('h3', { style: { margin: '0 0 20px', color: '#F1F5F9', fontSize: '20px' } }, title),
+        content
+      );
+      overlay.appendChild(box);
+      return overlay;
+    };
+
+    // ─── Render: Transaction Modal ───
+    const renderTransactionModal = () => {
+      const editing = state.editTx;
+      let type = editing?.type || 'expense';
+      let amount = editing?.amount?.toString() || '';
+      let category = editing?.category || '';
+      let currency = editing?.currency || state.currency;
+      let date = editing?.date || new Date().toISOString().split('T')[0];
+      let note = editing?.note || '';
+
+      const form = el('div', {});
+      
+      const buildForm = () => {
+        form.innerHTML = '';
+        const cats = state.categories[type] || [];
+
+        // Type toggle
+        const typeRow = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '16px' } },
+          ...[['expense','Gasto','#FF6B6B'],['income','Ingreso','#34D399']].map(([t,label,color]) =>
+            el('button', {
+              onClick: () => { type = t; category = ''; buildForm(); },
+              style: { flex: '1', padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: type===t ? color+'22' : '#1A1D27', color: type===t ? color : '#64748B', fontWeight: '600', fontSize: '14px', outline: type===t ? `2px solid ${color}44` : 'none' }
+            }, label)
+          )
+        );
+        form.appendChild(typeRow);
+
+        // Amount + currency
+        const amountRow = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px' } });
+        const amtInput = el('input', { type: 'number', placeholder: 'Monto', style: { ...inputStyles, flex: '1', fontSize: '18px', fontWeight: '700' } });
+        amtInput.value = amount;
+        amtInput.addEventListener('input', e => { amount = e.target.value; });
+        const curSelect = el('select', { style: { ...inputStyles, width: '90px', cursor: 'pointer' } });
+        Object.entries(CURRENCIES).forEach(([k,v]) => { const o = el('option', { value: k }, `${v.flag} ${k}`); if (k === currency) o.selected = true; curSelect.appendChild(o); });
+        curSelect.addEventListener('change', e => { currency = e.target.value; });
+        amountRow.appendChild(amtInput); amountRow.appendChild(curSelect);
+        form.appendChild(amountRow);
+
+        // Date
+        const dateInput = el('input', { type: 'date', style: { ...inputStyles, marginBottom: '12px' } });
+        dateInput.value = date;
+        dateInput.addEventListener('change', e => { date = e.target.value; });
+        form.appendChild(dateInput);
+
+        // Categories
+        form.appendChild(el('label', { style: { fontSize: '12px', color: '#64748B', marginBottom: '6px', display: 'block' } }, 'Categoría'));
+        const catGrid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '12px' } });
+        cats.forEach(c => {
+          catGrid.appendChild(el('button', {
+            onClick: () => { category = c.id; buildForm(); },
+            style: { padding: '10px 4px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: category===c.id ? c.color+'22' : '#1A1D27', outline: category===c.id ? `2px solid ${c.color}66` : 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }
+          },
+            el('span', { style: { fontSize: '20px' } }, c.icon),
+            el('span', { style: { fontSize: '10px', color: category===c.id ? c.color : '#94A3B8', fontWeight: '500' } }, c.name)
+          ));
+        });
+        form.appendChild(catGrid);
+
+        // Note
+        const noteInput = el('input', { placeholder: 'Nota (opcional)', style: { ...inputStyles, marginBottom: '20px' } });
+        noteInput.value = note;
+        noteInput.addEventListener('input', e => { note = e.target.value; });
+        form.appendChild(noteInput);
+
+        // Actions
+        const actions = el('div', { style: { display: 'flex', gap: '8px' } });
+        if (editing) {
+          actions.appendChild(el('button', {
+            onClick: () => {
+              update({ transactions: state.transactions.filter(t => t.id !== editing.id), modal: null, editTx: null });
+              showToast('Registro eliminado');
+              autoSync();
+            },
+            style: { padding: '12px', borderRadius: '12px', border: 'none', background: '#FF6B6B22', color: '#FF6B6B', cursor: 'pointer', fontSize: '18px' }
+          }, '🗑️'));
+        }
+        actions.appendChild(el('button', {
+          onClick: () => update({ modal: null, editTx: null }),
+          style: { flex: '1', padding: '12px', borderRadius: '12px', border: '1px solid #2A2D3A', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '14px' }
+        }, 'Cancelar'));
+        actions.appendChild(el('button', {
+          onClick: () => {
+            if (!amount || !category) return;
+            const tx = { type, amount: parseFloat(amount), category, currency, date, note };
+            if (editing) {
+              update({ transactions: state.transactions.map(t => t.id === editing.id ? { ...tx, id: editing.id } : t), modal: null, editTx: null });
+              showToast('Registro actualizado');
+            } else {
+              update({ transactions: [...state.transactions, { ...tx, id: Date.now().toString() }], modal: null, editTx: null });
+              showToast('Registro agregado');
+            }
+            autoSync();
+          },
+          style: { flex: '2', padding: '12px', borderRadius: '12px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600', background: type==='expense' ? 'linear-gradient(135deg,#FF6B6B,#EE5A24)' : 'linear-gradient(135deg,#34D399,#059669)', color: '#fff' }
+        }, editing ? 'Guardar' : 'Agregar'));
+        form.appendChild(actions);
+      };
+
+      buildForm();
+      return renderModal(editing ? 'Editar Registro' : 'Nuevo Registro', form);
+    };
+
+    // ─── Render: Settings Modal (with Drive) ───
+    const renderSettingsModal = () => {
+      const stats = {
+        txs: state.transactions.length,
+        rec: state.recurring.length,
+        activeRec: state.recurring.filter(r => r.active).length,
+        cats: state.categories.expense.length + state.categories.income.length,
+        size: (new Blob([JSON.stringify(state)]).size / 1024).toFixed(1),
+      };
+
+      const section = (title, children) => el('div', { style: { background: '#1A1D27', borderRadius: '14px', padding: '16px', marginBottom: '12px', border: '1px solid #1E2030' } },
+        el('div', { style: { fontSize: '13px', color: '#94A3B8', fontWeight: '600', marginBottom: '12px' } }, title),
+        ...children
+      );
+
+      const content = el('div', {},
+        // Google Drive
+        section('☁️ Google Drive', [
+          el('p', { style: { fontSize: '12px', color: '#64748B', margin: '0 0 12px' } },
+            state.driveStatus === 'connected'
+              ? `✅ Conectado${state.lastSync ? ` · Último sync: ${new Date(state.lastSync).toLocaleString('es-MX')}` : ''}`
+              : 'Conecta tu Google Drive para respaldo automático en la nube. Tus datos se guardan en una carpeta privada de la app.'
+          ),
+          el('div', { style: { display: 'flex', gap: '8px' } },
+            state.driveStatus === 'connected'
+              ? [
+                  el('button', { onClick: syncWithDrive, style: btnStyle('#22D3EE22', '#22D3EE', { flex: '1' }) }, '🔄 Sincronizar'),
+                  el('button', { onClick: disconnectDrive, style: btnStyle('#FF6B6B22', '#FF6B6B', { flex: '1' }) }, 'Desconectar'),
+                ]
+              : [
+                  el('button', {
+                    onClick: connectDrive,
+                    style: btnStyle('linear-gradient(135deg, #22D3EE, #818CF8)', '#fff', { width: '100%', padding: '14px' })
+                  }, state.driveStatus === 'connecting' ? '⏳ Conectando...' : '🔗 Conectar Google Drive'),
+                ]
+          ),
+        ]),
+
+        // Export/Import
+        section('📂 Respaldo Local', [
+          el('div', { style: { display: 'flex', gap: '8px' } },
+            el('button', {
+              onClick: () => {
+                const blob = new Blob([JSON.stringify({ transactions: state.transactions, categories: state.categories, budgets: state.budgets, recurring: state.recurring, exportedAt: new Date().toISOString(), app: 'Finanxas' }, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                a.download = `finanxas_backup_${new Date().toISOString().split('T')[0]}.json`;
+                a.click(); URL.revokeObjectURL(a.href);
+                showToast('Datos exportados');
+              },
+              style: btnStyle('#34D39922', '#34D399', { flex: '1' })
+            }, '📤 Exportar'),
+            (() => {
+              const label = el('label', { style: { ...btnStyle('#60A5FA22', '#60A5FA', { flex: '1' }), textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '📥 Importar');
+              const fileInput = el('input', { type: 'file', accept: '.json', style: { display: 'none' } });
+              fileInput.addEventListener('change', e => {
+                const file = e.target.files?.[0]; if (!file) return;
+                const reader = new FileReader();
+                reader.onload = ev => {
+                  try {
+                    const d = JSON.parse(ev.target.result);
+                    if (d.transactions) { update({ transactions: d.transactions, categories: d.categories || state.categories, budgets: d.budgets || state.budgets, recurring: d.recurring || state.recurring, modal: null }); showToast(`Importados: ${d.transactions.length} registros`); }
+                  } catch { showToast('Archivo no válido', 'error'); }
+                };
+                reader.readAsText(file);
+              });
+              label.appendChild(fileInput);
+              return label;
+            })()
+          ),
+        ]),
+
+        // Stats
+        section('📊 Estadísticas', [
+          el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+            ...[ { l: 'Registros', v: stats.txs, i: '📝' }, { l: 'Recurrentes', v: `${stats.activeRec}/${stats.rec}`, i: '🔄' }, { l: 'Categorías', v: stats.cats, i: '🏷️' }, { l: 'Datos', v: `${stats.size} KB`, i: '💾' }
+            ].map(s => el('div', { style: { padding: '10px 12px', borderRadius: '10px', background: '#13151E' } },
+              el('div', { style: { fontSize: '11px', color: '#64748B' } }, `${s.i} ${s.l}`),
+              el('div', { style: { fontSize: '16px', fontWeight: '700', color: '#E2E8F0', marginTop: '2px' } }, String(s.v))
+            ))
+          )
+        ]),
+
+        // Danger
+        section('⚠️ Zona de Peligro', [
+          el('button', {
+            onClick: () => { if (confirm('¿Borrar TODOS los datos permanentemente?')) { update({ transactions: [], categories: DEFAULT_CATEGORIES, budgets: {}, recurring: [], modal: null }); showToast('Datos eliminados'); } },
+            style: { width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #FF6B6B44', background: '#FF6B6B11', color: '#FF6B6B', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }
+          }, 'Borrar Todos los Datos')
+        ]),
+
+        el('div', { style: { textAlign: 'center', padding: '12px 0 0', color: '#334155', fontSize: '11px' } }, 'Finanxas v2.0 · Control Financiero Personal')
+      );
+
+      return renderModal('⚙️ Ajustes', content);
+    };
+
+    // ─── Render: Recurring Modal ───
+    const renderRecurringModal = () => {
+      let showForm = false;
+      const allCats = [...state.categories.expense, ...state.categories.income];
+      
+      const content = el('div', {});
+      let formType = 'expense', formAmount = '', formCat = '', formCur = state.currency, formFreq = 'monthly', formDate = new Date().toISOString().split('T')[0], formNote = '';
+
+      const buildContent = () => {
+        content.innerHTML = '';
+        
+        if (!showForm) {
+          // Header with add button
+          const header = el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' } },
+            el('button', { onClick: () => { showForm = true; buildContent(); }, style: btnStyle('#22D3EE22', '#22D3EE') }, '+ Nuevo')
+          );
+          content.appendChild(header);
+
+          if (state.recurring.length === 0) {
+            content.appendChild(el('div', { style: { textAlign: 'center', padding: '32px', color: '#475569' } },
+              el('div', { style: { fontSize: '40px', marginBottom: '8px' } }, '🔄'),
+              el('div', { style: { fontSize: '14px' } }, 'Sin recurrentes'),
+              el('div', { style: { fontSize: '12px', marginTop: '4px' } }, 'Agrega renta, suscripciones, salario, etc.')
+            ));
+          } else {
+            state.recurring.forEach(r => {
+              const cat = allCats.find(c => c.id === r.category) || { icon: '❓', name: '?', color: '#666' };
+              const fl = FREQUENCIES.find(f => f.id === r.frequency)?.label || r.frequency;
+              content.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #1A1D27', opacity: r.active ? '1' : '0.45' } },
+                el('div', { style: { width: '38px', height: '38px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', background: cat.color+'18', marginRight: '12px', flexShrink: '0' } }, cat.icon),
+                el('div', { style: { flex: '1', minWidth: '0' } },
+                  el('div', { style: { fontSize: '13px', color: '#E2E8F0', fontWeight: '500' } }, r.note),
+                  el('div', { style: { fontSize: '11px', color: '#475569' } }, `${fl} · ${r.type==='expense'?'Gasto':'Ingreso'} · ${CURRENCIES[r.currency]?.flag} ${r.currency}`)
+                ),
+                el('div', { style: { fontSize: '14px', fontWeight: '600', color: r.type==='income'?'#34D399':'#FF6B6B', marginRight: '8px' } }, fmt(r.amount, r.currency)),
+                el('button', { onClick: () => { update({ recurring: state.recurring.map(x => x.id === r.id ? { ...x, active: !x.active } : x) }); buildContent(); autoSync(); }, style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px' } }, r.active ? '⏸' : '▶️'),
+                el('button', { onClick: () => { update({ recurring: state.recurring.filter(x => x.id !== r.id) }); showToast('Eliminado'); buildContent(); autoSync(); }, style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '4px', color: '#475569' } }, '✕')
+              ));
+            });
+          }
+        } else {
+          // New recurring form
+          const cats = state.categories[formType] || [];
+
+          // Type toggle
+          content.appendChild(el('div', { style: { display: 'flex', gap: '8px', marginBottom: '14px' } },
+            ...[['expense','Gasto','#FF6B6B'],['income','Ingreso','#34D399']].map(([t,l,c]) =>
+              el('button', { onClick: () => { formType = t; formCat = ''; buildContent(); }, style: { flex: '1', padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: formType===t?c+'22':'#1A1D27', color: formType===t?c:'#64748B', fontWeight: '600', outline: formType===t?`2px solid ${c}44`:'none' } }, l)
+            )
+          ));
+
+          const noteIn = el('input', { placeholder: 'Descripción (ej: Renta, Netflix)', style: { ...inputStyles, marginBottom: '10px' } });
+          noteIn.value = formNote; noteIn.addEventListener('input', e => { formNote = e.target.value; });
+          content.appendChild(noteIn);
+
+          const amtRow = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px' } });
+          const amtIn = el('input', { type: 'number', placeholder: 'Monto', style: { ...inputStyles, flex: '1', fontWeight: '700' } });
+          amtIn.value = formAmount; amtIn.addEventListener('input', e => { formAmount = e.target.value; });
+          const curSel = el('select', { style: { ...inputStyles, width: '90px' } });
+          Object.entries(CURRENCIES).forEach(([k,v]) => { const o = el('option', { value: k }, `${v.flag} ${k}`); if (k===formCur) o.selected = true; curSel.appendChild(o); });
+          curSel.addEventListener('change', e => { formCur = e.target.value; });
+          amtRow.appendChild(amtIn); amtRow.appendChild(curSel);
+          content.appendChild(amtRow);
+
+          content.appendChild(el('label', { style: { fontSize: '12px', color: '#64748B', marginBottom: '6px', display: 'block' } }, 'Frecuencia'));
+          content.appendChild(el('div', { style: { display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' } },
+            ...FREQUENCIES.map(f => el('button', { onClick: () => { formFreq = f.id; buildContent(); }, style: { padding: '8px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '600', background: formFreq===f.id?'#22D3EE22':'#1A1D27', color: formFreq===f.id?'#22D3EE':'#64748B' } }, f.label))
+          ));
+
+          content.appendChild(el('label', { style: { fontSize: '12px', color: '#64748B', marginBottom: '6px', display: 'block' } }, 'Categoría'));
+          content.appendChild(el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '12px' } },
+            ...cats.map(c => el('button', { onClick: () => { formCat = c.id; buildContent(); }, style: { padding: '8px 4px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: formCat===c.id?c.color+'22':'#1A1D27', outline: formCat===c.id?`2px solid ${c.color}66`:'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' } },
+              el('span', { style: { fontSize: '18px' } }, c.icon),
+              el('span', { style: { fontSize: '9px', color: formCat===c.id?c.color:'#94A3B8' } }, c.name)
+            ))
+          ));
+
+          const dateIn = el('input', { type: 'date', style: { ...inputStyles, marginBottom: '16px' } });
+          dateIn.value = formDate; dateIn.addEventListener('change', e => { formDate = e.target.value; });
+          content.appendChild(dateIn);
+
+          content.appendChild(el('div', { style: { display: 'flex', gap: '8px' } },
+            el('button', { onClick: () => { showForm = false; buildContent(); }, style: btnStyle('#1A1D27', '#94A3B8', { flex: '1', border: '1px solid #2A2D3A' }) }, 'Cancelar'),
+            el('button', {
+              onClick: () => {
+                if (!formAmount || !formCat || !formNote) return;
+                update({ recurring: [...state.recurring, { id: Date.now().toString(), type: formType, amount: parseFloat(formAmount), category: formCat, currency: formCur, frequency: formFreq, startDate: formDate, note: formNote, active: true, lastApplied: null }] });
+                showToast('Recurrente creado');
+                showForm = false; formAmount = ''; formCat = ''; formNote = '';
+                buildContent();
+                autoSync();
+              },
+              style: btnStyle('linear-gradient(135deg, #22D3EE, #818CF8)', '#fff', { flex: '2' })
+            }, 'Crear Recurrente')
+          ));
+        }
+      };
+
+      buildContent();
+      return renderModal('🔄 Recurrentes', content);
+    };
+
+    // ─── Auto-sync (debounced) ───
+    let syncTimeout = null;
+    const autoSync = () => {
+      if (!GDrive.isReady) return;
+      clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => syncWithDrive(), 5000); // Sync 5s after last change
+    };
+
+    // ─── Render: Bottom Nav ───
+    const renderNav = () => {
+      return el('div', { style: {
+        position: 'fixed', bottom: '0', left: '0', right: '0', height: '72px',
+        background: 'linear-gradient(180deg, transparent, #0B0D14 30%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+        padding: '0 12px', paddingBottom: 'env(safe-area-inset-bottom, 0px)', zIndex: '100',
+      }},
+        ...[
+          { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+          { id: 'transactions', icon: '📋', label: 'Registros' },
+        ].map(item => el('button', {
+          onClick: () => update({ view: item.id }),
+          style: { flex: '1', maxWidth: '80px', padding: '8px 0', borderRadius: '12px', border: 'none', cursor: 'pointer', background: state.view === item.id ? '#22D3EE12' : 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }
+        },
+          el('span', { style: { fontSize: '20px' } }, item.icon),
+          el('span', { style: { fontSize: '10px', fontWeight: '600', color: state.view === item.id ? '#22D3EE' : '#475569' } }, item.label)
+        )),
+        // FAB
+        el('button', {
+          onClick: () => update({ modal: 'transaction', editTx: null }),
+          style: { width: '52px', height: '52px', borderRadius: '16px', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #22D3EE, #818CF8)', color: '#fff', fontSize: '26px', fontWeight: '300', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(34,211,238,0.3)', margin: '0 6px' }
+        }, '+'),
+        ...[
+          { action: 'recurring', icon: '🔄', label: 'Recurr.' },
+          { action: 'budget', icon: '🎯', label: 'Presup.' },
+          { action: 'settings', icon: '⚙️', label: 'Ajustes' },
+        ].map(item => el('button', {
+          onClick: () => update({ modal: item.action }),
+          style: { flex: '1', maxWidth: '80px', padding: '8px 0', borderRadius: '12px', border: 'none', cursor: 'pointer', background: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }
+        },
+          el('span', { style: { fontSize: '20px' } }, item.icon),
+          el('span', { style: { fontSize: '10px', fontWeight: '600', color: '#475569' } }, item.label)
+        ))
+      );
+    };
+
+    // ─── Main Render ───
+    const render = () => {
+      const app = document.getElementById('app');
+      app.innerHTML = '';
+      app.appendChild(renderHeader());
+      const content = el('div', { style: { padding: '8px 16px 100px' } });
+      if (state.view === 'dashboard') content.appendChild(renderDashboard());
+      else content.appendChild(renderTransactions());
+      app.appendChild(content);
+      app.appendChild(renderNav());
+
+      // Toast
+      if (state.toast) app.appendChild(renderToast());
+
+      // Modals
+      if (state.modal === 'transaction') app.appendChild(renderTransactionModal());
+      if (state.modal === 'settings') app.appendChild(renderSettingsModal());
+      if (state.modal === 'recurring') app.appendChild(renderRecurringModal());
+    };
+
+    // ─── Init ───
+    state = initState();
+    document.getElementById('loading').style.display = 'none';
+    render();
+
+    // Init Google Drive in background
+    GDrive.init().then(ready => {
+      if (ready && GDrive.accessToken) {
+        update({ driveStatus: 'connected' });
+      }
+    });
+
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/finanxas/sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>
